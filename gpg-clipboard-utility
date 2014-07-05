@@ -1,0 +1,361 @@
+#! /bin/sh
+
+kill_targets() {
+	while test x"$1" != x"stop"
+	do
+		shift 2 # Skip remaining sources.
+	done
+	shift # Target list is first again.
+	while test x"$1" = x"+"
+	do
+		test -e "$2" && rm -- "$2"
+		echo "Target '$2' needs updating." >& 2
+		shift 2
+	done
+}
+
+missing_source() {
+	echo "Missing required source '$1'..." >& 2
+	false || exit
+}
+
+# needs_making $tgt1 + $tgt2 + ... + $tgtN from $src1 + $src2 + ... + $srcN
+# Outdated targets are deleted.
+# Returns success if caller needs to make the targets.
+needs_making() {
+	local otgt ysrc mtime
+	otgt=; ysrc=
+	set -- + "$@" stop
+	while test x"$1" != x"stop"
+	do
+		test -n "$2";
+		if test -e "$2"
+		then
+			test -f "$2"
+			mtime=`stat -Lc '%Y' "$2"`
+		else
+			mtime=
+		fi
+		if test x"$1" = x"from"
+		then
+			# First source.
+			test -n "$mtime" || missing_source "$2"
+			test -n "$otgt" || return # No targets exist.
+			test -z "$ysrc" # Only one "from" allowed.
+			ysrc=$mtime
+		else
+			test x"$1" = x"+"
+		fi
+		if test -z "$otgt"
+		then
+			# First target.
+			test -z "$mtime" && kill_targets "$@" && return
+			otgt=$mtime
+		elif test -z "$ysrc"
+		then
+			# Another target.
+			test -z "$mtime" && kill_targets "$@" && return
+			test $mtime -lt $otgt && otgt=$mtime
+		else
+			# Another source.
+			test -n "$mtime" || missing_source "$2"
+			test $mtime -gt $ysrc && ysrc=$mtime
+			test $otgt -le $ysrc && kill_targets "$@"
+		fi
+		set -- "$@" "$1" "$2"; shift 2
+	done
+	false || return # Caller shall not make targets.
+}
+exec 4>& 2
+needs_making2() {
+	local rc
+	{
+		set -xv
+		echo "CALLED: $@"
+		needs_making2 "$@" && rc=$? || rc=$?
+		set +xv
+	} >& 4 2>& 4
+	return $rc
+}
+
+need() {
+	which "$1" > /dev/null 2>& 1 && return
+	echo "Cannot run: Command '$1' is not installed." >& 2
+	false || exit
+}
+
+# Set $button to the name of the button pressed.
+# First argument is always default button.
+# Last argument is "cancel/abort" and will generate a failure return code.
+request() {
+	local dfl abort
+	dfl=; button=
+	test $# = 1 && set -- "$@" Quit
+	test $# -ge 2
+	while test $# != 0
+	do
+		test -z "$dfl" && dfl=$1
+		test $# = 1 && abort=$1
+		button=$button${button:+,}$1; shift
+	done
+	exec 3>& -
+	button=`
+		xmessage -buttons "$button" -default "$dfl" -print \
+			-file "$progress" || :
+	` || button=$abort
+	exec 3> "$progress"
+	test -n "$button"
+	test x"$button" != x"$abort" || return
+}
+
+# $CHARSET needs to be set (an empty string for autoprobe).
+encrypt() {
+	OUT=out_local.txt
+	xclip -selection clipboard -o > "$OUT"
+	cat <<- . >& 3
+
+	The output message has been fetched from the clipboard.
+.
+	OUT_DEC=out.txt
+	local cs
+	for cs in $CHARSET ISO-8859-1 ISO-8859-15 UTF-8 die
+	do
+		iconv -t "$cs" "$OUT" > "$OUT_DEC" && break
+		test x"$cs" != x"die"
+	done
+	if test x"$cs" = x"$CHARSET"
+	then
+		cat <<- . >& 3
+
+	It has been converted to the same character set as the original
+	decrypted input message ($CHARSET).
+.
+	else
+		echo "It has been converted to character set $cs." >& 3
+	fi
+	OUT_ENC=out.asc
+	set -- gpg2 --encrypt --output "$OUT_ENC" --armor
+	while read recv
+	do
+		echo "Encrypting to receiver $recv." >& 3
+		set -- "$@" -r "$recv"
+	done < "$RECV"
+	"$@" "$OUT_DEC"
+	echo >& 3
+
+	OUT_ENC_HDR=out_patched.asc
+	sed "
+		/^---.*BEGIN .*MESSAGE/ {
+			p; s/.*/Charset: $cs/
+		}
+	" "$OUT_ENC" > "$OUT_ENC_HDR"
+
+	xclip -selection clipboard -i "$OUT_ENC_HDR"
+
+	cat <<- . >& 3
+	The encrypted output message is now available as the clipboard's new
+	contents.
+.
+}
+
+reply() {
+	need xclip
+	IN_ENC=in.asc
+	{
+		xclip -selection clipboard -o
+		echo
+	} > "$IN_ENC"
+	test -s "$IN_ENC"
+
+	need awk
+	CHARSET=`grep -i '^Charset:' "$IN_ENC" | awk '{print $2}'` || :
+	if test -n "$CHARSET"
+	then
+		echo "Message encoding is $CHARSET." >& 3
+	else
+		CHARSET=ISO-8859-1
+		echo "Assuming message encoding as $CHARSET." >& 3
+	fi
+
+	need gpg2
+	IN_DEC=in_foreign.txt
+	DEC_LOG=dec_log.txt
+	RECS=dec_receivers.txt
+	KEYS=dec_keys.txt
+	if
+		needs_making "$IN_DEC" + "$DEC_LOG" + "$RECS" + "$KEYS" \
+			from "$IN_ENC"
+	then
+		echo "Decrypting message..." >& 3
+		gpg2 --keyid-format=long --output="$IN_DEC" "$IN_ENC" \
+			2> "$DEC_LOG"
+		sed 's/^gpg:.*, ID \([0-9A-F]\{16\}\),.*/\1/; t; d' \
+			"$DEC_LOG" | sort > "$KEYS"
+		test -s "$IN_DEC"; test -s "$KEYS"
+	fi
+
+	OWN=own_key_ids.txt
+	if needs_making "$OWN"
+	then
+		gpg2 --list-secret-keys --with-colons | grep '^\(sec\|ssb\):' \
+			| cut -d: -f5 | sort > "$OWN"
+		test -s "$OWN"
+	fi
+
+	need join
+	RECV=receiver_ids.txt
+	if needs_making "$RECV" from "$KEYS" + "$OWN"
+	then
+		join -v1 "$KEYS" "$OWN" > "$RECV"
+	fi
+	
+	xmessage here1
+	need iconv
+	IN=in.txt
+	if needs_making "$IN" from "$IN_DEC"
+	then
+		iconv -f "$CHARSET" "$IN_DEC" > "$IN"
+	fi
+	
+	xclip -selection clipboard -i "$IN"
+	cat <<- . >& 3
+
+	The decrypted message has been converted to the local character set
+	and is now available as the clipboard's new contents.
+	
+	Reply to the encrypted e-mail message now, and insert the text from
+	the clipboard as quoted text.
+	
+	Then finish the e-mail by adding your reply text, and copy the whole
+	resulting e-mail text back into the clipboard.
+	
+	Finally, press "Encrypt" to encrypt the e-Mail to the original sender,
+	or press "Quit" to terminate the application prematurely.
+.
+	request Encrypt || return
+	encrypt || return
+	cat <<- . >& 3
+	
+	Paste it into the already-open reply e-mail message window now,
+	replacing the previously edited unencrypthed output message with the
+	encrypted version.
+	
+	Then send the reply e-mail.
+.
+}
+
+new() {
+	local r any
+
+	need xclip
+	DEC_LOG=dec_log.txt
+	{
+		xclip -selection clipboard -o
+		echo
+	} > "$DEC_LOG"
+	test -s "$DEC_LOG"
+
+	RECV=receiver_ids.txt
+	{
+		{
+			cat "$DEC_LOG"; echo
+			x=A-Fa-f0-9; nx="[^$x]"; x="[$x]"
+			s='^'$nx'*\('$x'\{6,\}\)'$nx'*'
+			sed 's/'"$s"'/<\1>\\n/g; t; d' "$DEC_LOG"
+			s='^[^<]*<\([^<>]\+\)>[^<]*'
+			sed 's/'"$s"'/\1\\n/g; t; d' "$DEC_LOG"
+		} | awk -F '\\\\n' '{for (i= 1; i <= NF; ++i) print $i}' \
+		| {
+			s=`printf '[\t\b\v ]'`
+			sed 's/^'"$s"'*//; s/'"$s"'*$//' | sed '/^$/d'
+		} | sort -u \
+		| while read recv
+		do
+			gpg2 --list-public-keys --with-colons \
+				-- "$recv" || :
+		done | grep ^pub: | cut -d: -f5 | sort -u
+	} 2> /dev/null > "$RECV"
+	
+	{
+		echo "The following receivers have been selected:"
+		echo
+		set -- gpg2 --list-public-keys
+		any=
+		while read r
+		do
+			set -- "$@" "$r"
+			any=y
+		done < "$RECV"
+		if test -z "$any"
+		then
+			{ echo "ERROR: No recpients match!"; echo; } >& 3
+			return
+		fi
+		"$@"
+	} >& 3
+	cat <<- . >& 3
+
+	Now copy the new message into the clipboard, encoded using the
+	configured character set of your locale.
+.
+	request Encrypt || return
+	encrypt || return
+	cat <<- . >& 3
+	
+	Paste it into a new e-mail message window.
+	
+	Then set subject and recipient and send the e-mail.
+.
+}
+
+
+set -e
+if ! xauth -q nlist > /dev/null
+then
+	echo "GUI is not accessible!" >& 2
+	false || exit
+fi
+need xmessage
+
+need tempfile
+errfile=`tempfile`
+progress=
+
+cleanup() {
+	echo "Failed!" >& 2
+	if test -n "$progress"
+	then
+		exec 3>& -
+		rm -- "$progress"
+	fi
+	exec 2> /dev/null
+	xmessage -buttons "Terminate" -file "$errfile" || :
+	rm -- "$errfile"
+}
+trap cleanup 0
+exec 2> "$errfile"
+progress=`tempfile`
+exec 3> "$progress"
+
+true && success=$?; false || failure=$?
+
+while :
+do
+	cat <<- . >& 3
+	In order to decrypt an existing PGP message for subsequent reply, copy
+	the encrypted message into the clipboard, then press "Reply".
+	
+	For encrypting a new PGP message, copy the recipients'
+	e-mail-addresses or PGP key IDs into the clipboard, then press "New".
+	
+	Or press "Exit" to quit this application.
+.
+	request Reply New Exit || break
+	if test $button = Reply
+	then
+		reply || break
+	else
+		new || break
+	fi
+done
+trap - 0
