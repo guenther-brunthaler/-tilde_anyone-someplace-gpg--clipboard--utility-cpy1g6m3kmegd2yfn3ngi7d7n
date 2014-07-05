@@ -1,87 +1,17 @@
 #! /bin/sh
 
-kill_targets() {
-	while test x"$1" != x"stop"
-	do
-		shift 2 # Skip remaining sources.
-	done
-	shift # Target list is first again.
-	while test x"$1" = x"+"
-	do
-		test -e "$2" && rm -- "$2"
-		echo "Target '$2' needs updating." >& 2
-		shift 2
-	done
-}
-
-missing_source() {
-	echo "Missing required source '$1'..." >& 2
-	false || exit
-}
-
-# needs_making $tgt1 + $tgt2 + ... + $tgtN from $src1 + $src2 + ... + $srcN
-# Outdated targets are deleted.
-# Returns success if caller needs to make the targets.
-needs_making() {
-	local otgt ysrc mtime
-	otgt=; ysrc=
-	set -- + "$@" stop
-	while test x"$1" != x"stop"
-	do
-		test -n "$2";
-		if test -e "$2"
-		then
-			test -f "$2"
-			mtime=`stat -Lc '%Y' "$2"`
-		else
-			mtime=
-		fi
-		if test x"$1" = x"from"
-		then
-			# First source.
-			test -n "$mtime" || missing_source "$2"
-			test -n "$otgt" || return # No targets exist.
-			test -z "$ysrc" # Only one "from" allowed.
-			ysrc=$mtime
-		else
-			test x"$1" = x"+"
-		fi
-		if test -z "$otgt"
-		then
-			# First target.
-			test -z "$mtime" && kill_targets "$@" && return
-			otgt=$mtime
-		elif test -z "$ysrc"
-		then
-			# Another target.
-			test -z "$mtime" && kill_targets "$@" && return
-			test $mtime -lt $otgt && otgt=$mtime
-		else
-			# Another source.
-			test -n "$mtime" || missing_source "$2"
-			test $mtime -gt $ysrc && ysrc=$mtime
-			test $otgt -le $ysrc && kill_targets "$@"
-		fi
-		set -- "$@" "$1" "$2"; shift 2
-	done
-	false || return # Caller shall not make targets.
-}
-exec 4>& 2
-needs_making2() {
-	local rc
-	{
-		set -xv
-		echo "CALLED: $@"
-		needs_making2 "$@" && rc=$? || rc=$?
-		set +xv
-	} >& 4 2>& 4
-	return $rc
-}
-
 need() {
 	which "$1" > /dev/null 2>& 1 && return
 	echo "Cannot run: Command '$1' is not installed." >& 2
 	false || exit
+}
+
+rmie() {
+	while test $# != 0
+	do
+		test -e "$1" && rm -- "$1"
+		shift
+	done
 }
 
 # Set $button to the name of the button pressed.
@@ -182,20 +112,16 @@ reply() {
 	DEC_LOG=dec_log.txt
 	RECS=dec_receivers.txt
 	KEYS=dec_keys.txt
-	if
-		needs_making "$IN_DEC" + "$DEC_LOG" + "$RECS" + "$KEYS" \
-			from "$IN_ENC"
-	then
-		echo "Decrypting message..." >& 3
-		gpg2 --keyid-format=long --output="$IN_DEC" "$IN_ENC" \
-			2> "$DEC_LOG"
-		sed 's/^gpg:.*, ID \([0-9A-F]\{16\}\),.*/\1/; t; d' \
-			"$DEC_LOG" | sort > "$KEYS"
-		test -s "$IN_DEC"; test -s "$KEYS"
-	fi
+	echo "Decrypting message..." >& 3
+	rmie "$IN_DEC"
+	gpg2 --keyid-format=long --output="$IN_DEC" "$IN_ENC" \
+		2> "$DEC_LOG"
+	sed 's/^gpg:.*, ID \([0-9A-F]\{16\}\),.*/\1/; t; d' \
+		"$DEC_LOG" | sort > "$KEYS"
+	test -s "$IN_DEC"; test -s "$KEYS"
 
 	OWN=own_key_ids.txt
-	if needs_making "$OWN"
+	if test ! -e "$OWN" || test ! -s "$OWN"
 	then
 		gpg2 --list-secret-keys --with-colons | grep '^\(sec\|ssb\):' \
 			| cut -d: -f5 | sort > "$OWN"
@@ -204,18 +130,12 @@ reply() {
 
 	need join
 	RECV=receiver_ids.txt
-	if needs_making "$RECV" from "$KEYS" + "$OWN"
-	then
-		join -v1 "$KEYS" "$OWN" > "$RECV"
-	fi
+	join -v1 "$KEYS" "$OWN" > "$RECV"
 	
 	xmessage here1
 	need iconv
 	IN=in.txt
-	if needs_making "$IN" from "$IN_DEC"
-	then
-		iconv -f "$CHARSET" "$IN_DEC" > "$IN"
-	fi
+	iconv -f "$CHARSET" "$IN_DEC" > "$IN"
 	
 	xclip -selection clipboard -i "$IN"
 	cat <<- . >& 3
