@@ -64,6 +64,7 @@ encrypt() {
 		echo "It has been converted to character set $cs." >& 3
 	fi
 	OUT_ENC=out.asc
+	rmie "$OUT_ENC"
 	set -- gpg2 --encrypt --output "$OUT_ENC" --armor
 	while read recv
 	do
@@ -71,7 +72,6 @@ encrypt() {
 		set -- "$@" -r "$recv"
 	done < "$RECV"
 	"$@" "$OUT_DEC"
-	echo >& 3
 
 	OUT_ENC_HDR=out_patched.asc
 	sed "
@@ -132,7 +132,6 @@ reply() {
 	RECV=receiver_ids.txt
 	join -v1 "$KEYS" "$OWN" > "$RECV"
 	
-	xmessage here1
 	need iconv
 	IN=in.txt
 	iconv -f "$CHARSET" "$IN_DEC" > "$IN"
