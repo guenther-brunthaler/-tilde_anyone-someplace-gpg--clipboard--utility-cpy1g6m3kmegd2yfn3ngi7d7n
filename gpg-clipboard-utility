@@ -1,4 +1,14 @@
 #! /bin/sh
+show_version() {
+	wr <<- .; exit
+	$APP version 14.187
+
+	(c) 2014 by Guenther Brunthaler.
+	This scriptfile is free software.
+	Distribution is permitted under the terms of the GPLv3.
+.
+}
+APP=${0##*/}
 
 need() {
 	which "$1" > /dev/null 2>& 1 && return
