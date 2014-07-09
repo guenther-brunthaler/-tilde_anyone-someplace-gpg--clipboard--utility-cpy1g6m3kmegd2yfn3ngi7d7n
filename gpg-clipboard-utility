@@ -159,9 +159,12 @@ reply() {
 	resulting e-mail text back into the clipboard.
 	
 	Finally, press "Encrypt" to encrypt the e-Mail to the original sender,
-	or press "Quit" to terminate the application prematurely.
+	press "Quit" to terminate the application prematurely, press "Cancel"
+	to abort the reply operation in progress and return to the main menu
+	instead.
 .
-	request Encrypt || return
+	request Encrypt Cancel Quit || return
+	test $button = Cancel && return
 	encrypt || return
 	cat <<- . >& 3
 	
