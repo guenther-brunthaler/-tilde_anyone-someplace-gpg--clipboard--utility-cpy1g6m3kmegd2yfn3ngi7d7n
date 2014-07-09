@@ -1,14 +1,33 @@
 #! /bin/sh
 show_version() {
-	wr <<- .; exit
-	$APP version 14.190
+	wr <<- .
+	$APP version 14.190.1
 
 	(c) 2014 by Guenther Brunthaler.
-	This scriptfile is free software.
+	This script is free software.
 	Distribution is permitted under the terms of the GPLv3.
 .
 }
 APP=${0##*/}
+
+wr() {
+	if test -n "$fmt"
+	then
+		test -z "$*" && set -- -c
+		"$fmt" -w "$LINEWIDTH" "$@"
+	elif test -n "$fold"
+	then
+		"$fold" -s -w $LINEWIDTH
+	else
+		cat
+	fi
+}
+LINEWIDTH=72
+fmt=`which fmt 2> /dev/null` || fmt=
+if test -z "$fmt"
+then
+	fold=`which fold 2> /dev/null` || fold=
+fi
 
 need() {
 	which "$1" > /dev/null 2>& 1 && return
@@ -282,11 +301,65 @@ exec 3> "$progress"
 
 true && success=$?; false || failure=$?
 
+{ show_version; echo; } >& 3
+
 need awk
 need gpg2
 need iconv
 need join
 need xclip
+
+gpgax=gpg-agent
+phase=try
+while
+	test -z "$GPG_AGENT_INFO" || {
+		t=${GPG_AGENT_INFO%:*}
+		test x"$t" = x"$GPG_AGENT_INFO"
+	} || {
+		t2=${t##*:}
+		test x"$t2" = x"$t"
+	} || {
+		t=/proc/$t2/exe
+		test ! -L "$t"
+	} || ! t=`readlink "$t"` || test -z "$t" || test ! -f "$t" \
+	|| test x"${t##*/}" != test x"$gpgax"
+do
+	test -n "$HOME"
+	cache=$HOME/.cache
+	if test ! -d "$cache"
+	then
+		phase=new
+		mkdir -- "$cache"
+	fi
+	cache=$cache/gpg-agent.env
+	if test ! -f "$cache"
+	then
+		phase=new
+		test ! -e "$cache"
+		> "$cache"
+		chmod 600 -- "$cache"
+	fi
+	case $phase in
+		try)
+			echo "Trying to re-load saved $gpgax environment" \
+				"from '$cache'..." >& 3
+			phase=new;;
+		new)
+			echo "Launching $gpgax..." >& 3
+			need "$gpgax"
+			"$gpgax" -q --daemon > "$cache"
+			phase=fail
+			;;
+		*)
+			echo "Could not start $gpgax!" >& 2
+			false
+	esac
+	. "$cache"
+done
+if test $phase = try
+then
+	echo 'Using existing settings from $GPG_AGENT_INFO.' >& 3
+fi
 
 while :
 do
