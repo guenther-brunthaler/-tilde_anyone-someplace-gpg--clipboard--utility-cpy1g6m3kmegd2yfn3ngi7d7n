@@ -24,6 +24,14 @@ rmie() {
 	done
 }
 
+xmessageMBCS() {
+	local cs file
+	file=$1; shift
+	cs=ISO-8859-15 # xmessage does not support UTF-8.
+	iconv -ct "$cs" "$file" \
+	| LC_CTYPE="$cs" xmessage "$@" -file - 2> /dev/null || :
+}
+
 # Set $button to the name of the button pressed.
 # First argument is always default button.
 # Last argument is "cancel/abort" and will generate a failure return code.
@@ -40,10 +48,8 @@ request() {
 	done
 	exec 3>& -
 	button=`
-		cs=ISO-8859-15 # xmessage does not support UTF-8.
-		iconv -ct "$cs" "$progress" \
-		| LC_CTYPE="$cs" xmessage \
-			-buttons "$button" -default "$dfl" -print -file - \
+		xmessageMBCS "$progress" \
+			-buttons "$button" -default "$dfl" -print \
 			2> /dev/null || :
 	` || button=$abort
 	exec 3> "$progress"
@@ -53,13 +59,13 @@ request() {
 
 # $CHARSET needs to be set (an empty string for autoprobe).
 encrypt() {
-	OUT=out_local.txt
+	OUT=$TDIR/out_local.txt
 	xclip -selection clipboard -o > "$OUT"
 	cat <<- . >& 3
 
 	The output message has been fetched from the clipboard.
 .
-	OUT_DEC=out.txt
+	OUT_DEC=$TDIR/out.txt
 	local cs
 	for cs in $CHARSET ISO-8859-1 ISO-8859-15 UTF-8 die
 	do
@@ -76,7 +82,7 @@ encrypt() {
 	else
 		echo "It has been converted to character set $cs." >& 3
 	fi
-	OUT_ENC=out.asc
+	OUT_ENC=$TDIR/out.asc
 	rmie "$OUT_ENC"
 	set -- gpg2 --encrypt --output "$OUT_ENC" --armor
 	while read recv
@@ -86,7 +92,7 @@ encrypt() {
 	done < "$RECV"
 	"$@" "$OUT_DEC"
 
-	OUT_ENC_HDR=out_patched.asc
+	OUT_ENC_HDR=$TDIR/out_patched.asc
 	sed "
 		/^---.*BEGIN .*MESSAGE/ {
 			p; s/.*/Charset: $cs/
@@ -102,15 +108,13 @@ encrypt() {
 }
 
 reply() {
-	need xclip
-	IN_ENC=in.asc
+	IN_ENC=$TDIR/in.asc
 	{
 		xclip -selection clipboard -o
 		echo
 	} > "$IN_ENC"
 	test -s "$IN_ENC"
 
-	need awk
 	CHARSET=`grep -i '^Charset:' "$IN_ENC" | awk '{print $2}'` || :
 	if test -n "$CHARSET"
 	then
@@ -120,11 +124,10 @@ reply() {
 		echo "Assuming message encoding as $CHARSET." >& 3
 	fi
 
-	need gpg2
-	IN_DEC=in_foreign.txt
-	DEC_LOG=dec_log.txt
-	RECS=dec_receivers.txt
-	KEYS=dec_keys.txt
+	IN_DEC=$TDIR/in_foreign.txt
+	DEC_LOG=$TDIR/dec_log.txt
+	RECS=$TDIR/dec_receivers.txt
+	KEYS=$TDIR/dec_keys.txt
 	echo "Decrypting message..." >& 3
 	rmie "$IN_DEC"
 	gpg2 --keyid-format=long --output="$IN_DEC" "$IN_ENC" \
@@ -133,7 +136,7 @@ reply() {
 		"$DEC_LOG" | sort > "$KEYS"
 	test -s "$IN_DEC"; test -s "$KEYS"
 
-	OWN=own_key_ids.txt
+	OWN=$TDIR/own_key_ids.txt
 	if test ! -e "$OWN" || test ! -s "$OWN"
 	then
 		gpg2 --list-secret-keys --with-colons | grep '^\(sec\|ssb\):' \
@@ -141,12 +144,10 @@ reply() {
 		test -s "$OWN"
 	fi
 
-	need join
-	RECV=receiver_ids.txt
+	RECV=$TDIR/receiver_ids.txt
 	join -v1 "$KEYS" "$OWN" > "$RECV"
 	
-	need iconv
-	IN=in.txt
+	IN=$TDIR/in.txt
 	iconv -f "$CHARSET" "$IN_DEC" > "$IN"
 	
 	xclip -selection clipboard -i "$IN"
@@ -182,15 +183,14 @@ reply() {
 new() {
 	local r any
 
-	need xclip
-	DEC_LOG=dec_log.txt
+	DEC_LOG=$TDIR/dec_log.txt
 	{
 		xclip -selection clipboard -o
 		echo
 	} > "$DEC_LOG"
 	test -s "$DEC_LOG"
 
-	RECV=receiver_ids.txt
+	RECV=$TDIR/receiver_ids.txt
 	{
 		{
 			cat "$DEC_LOG"; echo
@@ -253,28 +253,40 @@ then
 	false || exit
 fi
 need xmessage
+need mktemp
 
-need tempfile
-errfile=`tempfile`
-progress=
+TDIR=`mktemp --tmpdir -d "$APP".XXXXXXXXXX`
+test -n "$TDIR"
+test -d "$TDIR"
 
 cleanup() {
 	echo "Failed!" >& 2
-	if test -n "$progress"
-	then
-		exec 3>& -
-		rm -- "$progress"
-	fi
+	test -n "$errfile" && exec 2>& -
+	test -n "$progress" && exec 3>& -
 	exec 2> /dev/null
-	xmessage -buttons "Terminate" -file "$errfile" || :
-	rm -- "$errfile"
+	if test -z "$OK" && test -n "$errfile"
+	then
+		xmessageMBCS "$errfile" -buttons "Terminate" || :
+	fi
+	rm -r -- "$TDIR" || :
 }
+OK=
+errfile=
+progress=
 trap cleanup 0
+
+errfile=$TDIR/errfile
 exec 2> "$errfile"
-progress=`tempfile`
+progress=$TDIR/progress
 exec 3> "$progress"
 
 true && success=$?; false || failure=$?
+
+need awk
+need gpg2
+need iconv
+need join
+need xclip
 
 while :
 do
@@ -295,4 +307,4 @@ do
 		new || break
 	fi
 done
-trap - 0
+OK=y
