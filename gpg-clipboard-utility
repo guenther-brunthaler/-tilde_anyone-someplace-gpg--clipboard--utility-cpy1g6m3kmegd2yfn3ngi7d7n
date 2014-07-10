@@ -1,6 +1,6 @@
 #! /bin/sh
 show_version() {
-	wr <<- .
+	wr -s <<- .
 	$APP version 14.190.1
 
 	(c) 2014 by Guenther Brunthaler.
@@ -9,6 +9,10 @@ show_version() {
 .
 }
 APP=${0##*/}
+
+which2() {
+	which "$1" 2> /dev/null || return
+}
 
 wr() {
 	if test -n "$fmt"
@@ -23,14 +27,14 @@ wr() {
 	fi
 }
 LINEWIDTH=72
-fmt=`which fmt 2> /dev/null` || fmt=
+fmt=`which2 fmt` || fmt=
 if test -z "$fmt"
 then
-	fold=`which fold 2> /dev/null` || fold=
+	fold=`which2 fold` || fold=
 fi
 
 need() {
-	which "$1" > /dev/null 2>& 1 && return
+	which2 "$1" > /dev/null && return
 	echo "Cannot run: Command '$1' is not installed." >& 2
 	false || exit
 }
@@ -80,7 +84,7 @@ request() {
 encrypt() {
 	OUT=$TDIR/out_local.txt
 	xclip -selection clipboard -o > "$OUT"
-	cat <<- . >& 3
+	cat <<- . | wr >& 3
 
 	The output message has been fetched from the clipboard.
 .
@@ -93,20 +97,20 @@ encrypt() {
 	done
 	if test x"$cs" = x"$CHARSET"
 	then
-		cat <<- . >& 3
+		cat <<- . | wr >& 3
 
 	It has been converted to the same character set as the original
 	decrypted input message ($CHARSET).
 .
 	else
-		echo "It has been converted to character set $cs." >& 3
+		echo "It has been converted to character set $cs." | wr >& 3
 	fi
 	OUT_ENC=$TDIR/out.asc
 	rmie "$OUT_ENC"
 	set -- gpg2 --encrypt --output "$OUT_ENC" --armor
 	while read recv
 	do
-		echo "Encrypting to receiver $recv." >& 3
+		echo "Encrypting to receiver $recv." | wr >& 3
 		set -- "$@" -r "$recv"
 	done < "$RECV"
 	"$@" "$OUT_DEC"
@@ -120,7 +124,7 @@ encrypt() {
 
 	xclip -selection clipboard -i "$OUT_ENC_HDR"
 
-	cat <<- . >& 3
+	cat <<- . | wr >& 3
 	The encrypted output message is now available as the clipboard's new
 	contents.
 .
@@ -137,17 +141,17 @@ reply() {
 	CHARSET=`grep -i '^Charset:' "$IN_ENC" | awk '{print $2}'` || :
 	if test -n "$CHARSET"
 	then
-		echo "Message encoding is $CHARSET." >& 3
+		echo "Message encoding is $CHARSET." | wr >& 3
 	else
 		CHARSET=ISO-8859-1
-		echo "Assuming message encoding as $CHARSET." >& 3
+		echo "Assuming message encoding as $CHARSET." | wr >& 3
 	fi
 
 	IN_DEC=$TDIR/in_foreign.txt
 	DEC_LOG=$TDIR/dec_log.txt
 	RECS=$TDIR/dec_receivers.txt
 	KEYS=$TDIR/dec_keys.txt
-	echo "Decrypting message..." >& 3
+	echo "Decrypting message..." | wr >& 3
 	rmie "$IN_DEC"
 	gpg2 --keyid-format=long --output="$IN_DEC" "$IN_ENC" \
 		2> "$DEC_LOG"
@@ -170,7 +174,7 @@ reply() {
 	iconv -f "$CHARSET" "$IN_DEC" > "$IN"
 	
 	xclip -selection clipboard -i "$IN"
-	cat <<- . >& 3
+	cat <<- . | wr >& 3
 
 	The decrypted message has been converted to the local character set
 	and is now available as the clipboard's new contents.
@@ -181,15 +185,20 @@ reply() {
 	Then finish the e-mail by adding your reply text, and copy the whole
 	resulting e-mail text back into the clipboard.
 	
-	Finally, press "Encrypt" to encrypt the e-Mail to the original sender,
-	press "Quit" to terminate the application prematurely, press "Cancel"
-	to abort the reply operation in progress and return to the main menu
-	instead.
+	Finally,
+
+	*
+	  press "Encrypt" to encrypt the e-Mail to the original sender,
+	*
+	  press "Quit" to terminate the application prematurely, or
+	*
+	  press "Cancel" to abort the reply operation in progress and return
+	  to the main menu instead.
 .
 	request Encrypt Cancel Quit || return
 	test $button = Cancel && return
 	encrypt || return
-	cat <<- . >& 3
+	cat <<- . | wr >& 3
 	
 	Paste it into the already-open reply e-mail message window now,
 	replacing the previously edited unencrypthed output message with the
@@ -244,19 +253,19 @@ new() {
 		done < "$RECV"
 		if test -z "$any"
 		then
-			{ echo "ERROR: No recpients match!"; echo; } >& 3
+			{ echo "ERROR: No recpients match!"; echo; } | wr >& 3
 			return
 		fi
 		"$@"
-	} >& 3
-	cat <<- . >& 3
+	} | wr -s >& 3
+	cat <<- . | wr >& 3
 
 	Now copy the new message into the clipboard, encoded using the
 	configured character set of your locale.
 .
 	request Encrypt || return
 	encrypt || return
-	cat <<- . >& 3
+	cat <<- . | wr >& 3
 	
 	Paste it into a new e-mail message window.
 	
@@ -342,10 +351,10 @@ do
 	case $phase in
 		try)
 			echo "Trying to re-load saved $gpgax environment" \
-				"from '$cache'..." >& 3
+				"from '$cache'..." | wr >& 3
 			phase=new;;
 		new)
-			echo "Launching $gpgax..." >& 3
+			echo "Launching $gpgax..." | wr >& 3
 			need "$gpgax"
 			"$gpgax" -q --daemon > "$cache"
 			phase=fail
@@ -358,12 +367,14 @@ do
 done
 if test $phase = try
 then
-	echo 'Using existing settings from $GPG_AGENT_INFO.' >& 3
+	echo "Using existing settings for $gpgax from \$GPG_AGENT_INFO." \
+		| wr >& 3
 fi
 
 while :
 do
-	cat <<- . >& 3
+	cat <<- . | wr >& 3
+
 	In order to decrypt an existing PGP message for subsequent reply, copy
 	the encrypted message into the clipboard, then press "Reply".
 	
