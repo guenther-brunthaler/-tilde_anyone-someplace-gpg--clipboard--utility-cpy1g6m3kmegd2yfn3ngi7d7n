@@ -1,11 +1,14 @@
 #! /bin/sh
 show_version() {
 	wr -s <<- .
-	$APP version 14.200.1
+	$APP version 14.200.2
 
 	(c) 2014 by Guenther Brunthaler.
 	This script is free software.
 	Distribution is permitted under the terms of the GPLv3.
+
+	Application menu icon "Lock heart"
+	(c) 2013 by User 'dear_theophilus' from 'openclipart.org'.
 .
 }
 APP=${0##*/}
