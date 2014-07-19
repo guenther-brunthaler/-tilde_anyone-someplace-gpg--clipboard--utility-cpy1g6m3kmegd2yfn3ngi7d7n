@@ -1,7 +1,7 @@
 #! /bin/sh
 show_version() {
 	wr -s <<- .
-	$APP version 14.200
+	$APP version 14.200.1
 
 	(c) 2014 by Guenther Brunthaler.
 	This script is free software.
@@ -9,6 +9,12 @@ show_version() {
 .
 }
 APP=${0##*/}
+APP_UUID=66vqawws41ff2spi2sulrp0q5
+
+die() {
+	echo "ERROR: $*" >& 2
+	false || exit
+}
 
 which2() {
 	which "$1" 2> /dev/null || return
@@ -35,8 +41,7 @@ fi
 
 need() {
 	which2 "$1" > /dev/null && return
-	echo "Cannot run: Command '$1' is not installed." >& 2
-	false || exit
+	die "Cannot run: Command '$1' is not installed."
 }
 
 rmie() {
@@ -56,17 +61,26 @@ xmessageMBCS() {
 }
 
 # Set $button to the name of the button pressed.
-# First argument is always default button.
-# Last argument is "cancel/abort" and will generate a failure return code.
+# First argument is always default button ("OK" is assumed without arguments).
+# If there is more than one argument, the last argument must be a
+# "cancel/abort" button and will generate a failure return code.
 request() {
 	local dfl abort
 	dfl=; button=
-	test $# = 1 && set -- "$@" Quit
-	test $# -ge 2
+	test $# = 0 && set -- OK
+	abort=$#
 	while test $# != 0
 	do
 		test -z "$dfl" && dfl=$1
-		test $# = 1 && abort=$1
+		if test $# = 1
+		then
+			if test "$abort" != 1
+			then
+				abort=$1
+			else
+				abort=
+			fi
+		fi
 		button=$button${button:+,}$1; shift
 	done
 	exec >& -
@@ -311,7 +325,7 @@ new() {
 	Now copy the new message into the clipboard, encoded using the
 	configured character set of your locale.
 .
-	request Encrypt || return
+	request Encrypt Quit || return
 	encrypt || return
 	cat <<- . | wr
 	
@@ -321,12 +335,183 @@ new() {
 .
 }
 
+ensure_dirs() {
+	local d b
+	for d
+	do
+		test -d "$d" && continue
+		b=`dirname "$d"`
+		ensure_dirs "$b"
+		mkdir -- "$d"
+	done
+}
+
+# Join indented lines with previous lines, replacing all indendation with a
+# single space.
+unfold() {
+	local line segment indented
+	line=
+	while IFS= read -r segment
+	do
+		if indented=`expr x"$segment" : x'[[:space:]]\+\(.*\)'`
+		then
+			line=$line${line:+ }$indented
+		else
+			test -n "$line" && printf '%s\n' "$line"
+			line=$segment
+		fi
+	done
+	test -n "$line" && printf '%s\n' "$line"
+}
+
+gen_desktop() {
+	local script base
+	script=$0
+	test ! -f "$script" && script=`which "$0"`
+	if ! test x"${script#/}" != x"$script"
+	then
+		base=`pwd`
+		while :
+		do
+			case $script in
+				"./"*) script=${script#*/};;
+				"../"*)
+					script=${script#*/}
+					base=`dirname "$base"`
+					;;
+				*) break
+			esac
+		done
+		script=$base/$script
+	fi
+	test -n "$script" && test -f "$script" && test -x "$script" ||
+		die "$APP script not found or not executable!"
+	cat << . | unfold
+[Desktop Entry]
+Version=1.0
+Terminal=false
+TryExec=$script
+Exec=$script
+Icon=lockheart-$APP_UUID
+Type=Application
+Categories=Utility;Security;
+Name=GnuPG Clipboard Utility
+Comment=Reply to or encrypt new PGP-encrypted e-mail via the clipboard
+Comment[de]=Mit Hilfe der Zwischenablage auf PGP-verschlüsselte e-Mails
+	antworten oder neue erstellen
+Encoding=UTF-8
+.
+}
+
+gen_appicon() {
+	cat << . | openssl base64 -d
+iVBORw0KGgoAAAANSUhEUgAAABgAAAATCAYAAACKsM07AAAEMElEQVQ4jY2UX2hW
+ZRzHP89zzvuc8/7pZcoYXiS6m0hihBSbmuSf0sAoctV7aQiCeBM0twTBeZxEbdMo
+IkHwRpZK02YQFVM2lcorb3YRyJIVTMVqG/r+O+/OOc/zdOH2Mpezvte/3/fze35/
+HsGcRnp7Wx0pD1vYAJSBb3UcH3714MEZnqDvgqAxsfaItfZNIIe1PxvHOfJOENwA
+EABX+voKCDEAKOAm8DSQA+4ZKd9+Zf/+648zHwqCjRjzDdA0V9Rt4FmgJqx9b+fR
+o4PyyvHj6+bMIwuvb+nqWoPrrsTas8AKaczlkb6+7QBnzpxpOHXq1HKAC93d2zFm
+GGgS8JWQcmV7T88apHwDSKwQAxeDoFVc6e8fBrYjxLtbOjsvzFdnreVqf//nCPE+
+EE35/id/O86HQC1fKh3JVCq9cy/+rL2n54OFL7t46FDBCvG1sPYHcaW/vwSwubPz
+KSHEIy2w1nLt2LHjUSrVMeF5SRTHbhzHKNeNmopFpeL407d6evY/mgUWGOrurgiI
+pIAZIHO1v3/F4h4LIfitoWHkd9+PlOe5SikAKmGo/sznq/ebmwcWmwOcD4IVAnwL
+96UV4iwgEeL8YBCohYHnzp1rjeP4ojZG1Wo1lFL4vo/WmmoYZiqVyk+nT59uXZgz
+GATKfTh4KYQ4K1NafwTcAjY2ZTJfzAcODAxsKBaL13zfV8YYrLVMTEwwNTVFKpVC
+a025XM6VSqWREydOrJvPc435koerPp4I8bEAGO3tfUZI+QtwP/S85+7lcpvL5fKP
+2WxWxnFMKpVibGyMsbExAFpaWli9ejW1Wg3Hcchms2XHcV5rvnnzRm3Zsl+BBqR8
+qT0IxiXA1gMHxq3Wm3Qct93NZLaGYfi953myVCqRSqWI45gwDOttKBaLuK6L53kY
+Y6hUKjmt9eXbLS0vpqRcL6Xc1B4E4zB3aPMaGhpaPj09Pam1ziRJguu6hGFIPp/n
+wYMHjI6OYq2lra0Nz/PwPI8kSZidnUVKSSaTKWez2VV79uypX79cCPB9v+z7/i3H
+ceqVZzIZSqUS+XwerTXGGJRSSCmJoqj+Eq01URRV8/l8daHnI4AdO3ZE1tr1nudd
+l1KilCKKItLpNHfu3KFarVKtVonjGK01Qog6JJ1OT+RyubWFQqG2JABg165d1TAM
+tyml6pA4jpmenq7HTE5O1tdVCIHWesIY07Jv3767i/0edycAnDx5MpNOp4ejKNqo
+taZYLCKlpFKpoJTCcRyUUiRJ8ocQ4oWOjo7H/rpLAhZDjDH1Yc7MzJDL5TDG3DLG
+PN/V1VVdyuOJAIDBwUG/VqsNz87OvmytpVQqAZAkyV9NTU2rdu/eXXtS/r9msFiF
+QqHW2Ni4zff9S0IIXNfFWjvR0NDQ/F/m/wsAD7erWq3uTKfTl4QQN5IkWbt3794l
+27JQ/wBBve7QFdPUJgAAAABJRU5ErkJggg==
+.
+}
+
+tools() {
+	need openssl
+	: ${HOME:?'No $HOME directory has been set!'}
+	: ${XDG_DATA_HOME:=$HOME/.local/share}
+	local icon desktop any
+	icon=$XDG_DATA_HOME/icons
+	desktop=$XDG_DATA_HOME/applications
+	ensure_dirs "$icon" "$desktop"
+	desktop=$desktop/gpgutil-$APP_UUID.desktop
+	icon=$icon/lockheart-$APP_UUID.png
+	cat <<- . | wr
+	Select one of the following utility functions:
+	
+	*
+	  Press "Install" to install a menu entry for the current user which
+	  runs the $APP script at its current location. This can also be used
+	  for re-installing $APP after the script has been moved to a
+	  different location within the file system.
+
+	*
+	  Press "Uninstall" to remove the menu entry which has been installed
+	  pressing "Install" at some point in the past.
+	  
+	*
+	  Press "Back" to leave this menu and return to the main menu instead.
+.
+	request Install Uninstall Back || { true && return; }
+	if test $button = Install
+	then
+		echo "Installing icon '$icon'..."
+		gen_appicon > "$icon"
+		echo "Installing desktop information file '$desktop'..."
+		gen_desktop > "$desktop"
+	elif test $button = Uninstall
+	then
+		local f
+		for f in "$icon" "$desktop"
+		do
+			if test -f "$f"
+			then
+				echo "Removing file '$f'..."
+				rm -- "$f"
+			fi
+		done
+	fi
+	cat <<- . | wr
+
+		Now the desktop menus needs to be refreshed.
+		
+		Press "Refresh" to attempt refreshing the desktop menu.
+		
+		Note that this can take a several seconds, depending on your
+		desktop environment.
+		
+		So please be patient.
+.
+	request Refresh Abort || { true && return; }
+	any=
+	xdg-desktop-menu forceupdate > /dev/null 2>& 1 && any=y
+	update-menus > /dev/null 2>& 1 && any=y
+	if test -n "$any"
+	then
+		echo "Desktop menus have been updated successfully."
+	else
+		cat <<- .
+			No supported method of updating the desktop menu has
+			been found. Please update the menus manually by
+			appropriate means.
+			
+			In some desktop environments, logging out and and
+			logging in again will automatically refresh the menus.
+.
+	fi | wr
+	request || true
+}
 
 set -e
 if ! xauth -q nlist > /dev/null
 then
-	echo "GUI is not accessible!" >& 2
-	false || exit
+	die "GUI is not accessible!"
 fi
 need xmessage
 need mktemp
@@ -379,7 +564,7 @@ while
 		t=/proc/$t2/exe
 		test ! -L "$t"
 	} || ! t=`readlink "$t"` || test -z "$t" || test ! -f "$t" \
-	|| test x"${t##*/}" != test x"$gpgax"
+	|| test x"${t##*/}" != x"$gpgax"
 do
 	test -n "$HOME"
 	cache=$HOME/.cache
@@ -408,8 +593,7 @@ do
 			phase=fail
 			;;
 		*)
-			echo "Could not start $gpgax!" >& 2
-			false
+			die "Could not start $gpgax!"
 	esac
 	. "$cache"
 done
@@ -428,15 +612,21 @@ do
 	
 	For encrypting a new PGP message, copy the recipients'
 	e-mail-addresses or PGP key IDs into the clipboard, then press "New".
+
+	Press "Tools" for less frequently used options.
 	
 	Or press "Exit" to quit this application.
 .
-	request Reply New Exit || break
+	request Reply New Tools Exit || break
 	if test $button = Reply
 	then
 		reply || break
-	else
+	elif test $button = New
+	then
 		new || break
+	elif test $button = Tools
+	then
+		tools || break
 	fi
 done
 OK=y
