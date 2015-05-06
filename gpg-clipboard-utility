@@ -1,9 +1,9 @@
 #! /bin/sh
 show_version() {
 	wr -s <<- .
-	$APP version 14.200.3
+	$APP version 15.126
 
-	(c) 2014 by Guenther Brunthaler.
+	(c) 2014-2015 by Guenther Brunthaler.
 	This script is free software.
 	Distribution is permitted under the terms of the GPLv3.
 
@@ -98,7 +98,7 @@ request() {
 }
 
 do_gpg() {
-	gpg2 --batch --no-tty "$@"
+	"$gpg2" --batch --no-tty "$@"
 }
 
 # $CHARSET needs to be set (an empty string for autoprobe).
@@ -553,12 +553,25 @@ true && success=$?; false || failure=$?
 show_version; echo
 
 need awk
-need gpg2
 need iconv
 need join
 need xclip
 
-gpgax=gpg-agent
+if ! { gpg2=`which2 gpg2` && test -x "$gpg2"; }
+then
+	gpg2=`which2 gpg` && test -x "$gpg2" || gpg2=
+fi
+test -n "$gpg2" \
+&& v=`
+	"$gpg2" --version 2> /dev/null \
+		| sed '1!d; s/.*\(gpg\|GnuPG\)[^0-9]*//; s/[^0-9].*//'
+` \
+&& expr x"$v" : x'[0-9]\+$' > /dev/null \
+&& test $v -ge 2 \
+|| die "GnuPG version 2 or later needs to be installed!"
+
+gpgax=gpg-agent2
+which2 "$gpgax" > /dev/null || gpgax=gpg-agent
 phase=try
 while
 	test -z "$GPG_AGENT_INFO" || {
