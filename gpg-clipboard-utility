@@ -1,7 +1,7 @@
 #! /bin/sh
 show_version() {
 	wr -s <<- .
-	$APP version 15.126
+	$APP version 15.255
 
 	(c) 2014-2015 by Guenther Brunthaler.
 	This script is free software.
@@ -609,18 +609,39 @@ do
 		new)
 			echo "Launching $gpgax..." | wr
 			need "$gpgax"
-			"$gpgax" -q --daemon > "$cache"
+			{
+				# gpg-agent will not write anything for GnuPG
+				# version 2.1 or later.
+				echo GPG_AGENT_INFO=not_needed
+				"$gpgax" -q --daemon
+			} > "$cache"
 			phase=fail
 			;;
 		*)
 			die "Could not start $gpgax!"
 	esac
-	. "$cache"
+	unset GPG_AGENT_INFO; . "$cache"
+	if test x"$GPG_AGENT_INFO" = x'not_needed'
+	then
+		# Since GnuPG 2.1, $GPG_AGENT_INFO is no longer used and the
+		# existence of a socket indicates the agent is running.
+		if test -S "${GNUPGHOME:-"$HOME/.gnupg"}/S.gpg-agent"
+		then
+			unset GPG_AGENT_INFO
+			phase=try
+			break
+		fi
+	fi
 done
 if test $phase = try
 then
-	echo "Using existing settings for $gpgax from \$GPG_AGENT_INFO." \
-		| wr
+	if test -n "$GPG_AGENT_INFO"
+	then
+		echo "Using existing settings for $gpgax from" \
+			"\$GPG_AGENT_INFO."
+	else
+		echo "$gpgax is already running; using it."
+	fi | wr
 fi
 
 while :
