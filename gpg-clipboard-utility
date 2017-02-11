@@ -103,38 +103,38 @@ do_gpg() {
 
 # $RECV needs to have already been set.
 encrypt() {
-	local cs OUT OUT_DEC CHARSET OUT_ENC OUT_ENC_HDR
-	OUT=$TDIR/out_local.txt
-	xclip -selection clipboard -o > "$OUT"
+	local cs out out_dec charset out_enc out_enc_hdr
+	out=$TDIR/out_local.txt
+	xclip -selection clipboard -o > "$out"
 	cat <<- . | wr
 
 	The output message has been fetched from the clipboard.
 .
-	OUT_DEC=$TDIR/out.txt
+	out_dec=$TDIR/out.txt
 	for cs in ISO-8859-1 ISO-8859-15 UTF-8 die
 	do
-		iconv -t "$cs" "$OUT" > "$OUT_DEC" && break
+		iconv -t "$cs" "$out" > "$out_dec" && break
 		test x"$cs" != x"die"
 	done
 	echo "It has been converted to character set $cs." | wr
-	OUT_ENC=$TDIR/out.asc
-	rmie "$OUT_ENC"
-	set -- do_gpg --encrypt --set-filename "" --output "$OUT_ENC" --armor
+	out_enc=$TDIR/out.asc
+	rmie "$out_enc"
+	set -- do_gpg --encrypt --set-filename "" --output "$out_enc" --armor
 	while read recv
 	do
 		echo "Encrypting to receiver $recv." | wr
 		set -- "$@" -r "$recv"
 	done < "$RECV"
-	"$@" "$OUT_DEC"
+	"$@" "$out_dec"
 
-	OUT_ENC_HDR=$TDIR/out_patched.asc
+	out_enc_hdr=$TDIR/out_patched.asc
 	sed "
 		/^---.*BEGIN .*MESSAGE/ {
 			p; s/.*/Charset: $cs/
 		}
-	" "$OUT_ENC" > "$OUT_ENC_HDR"
+	" "$out_enc" > "$out_enc_hdr"
 
-	xclip -selection clipboard -i "$OUT_ENC_HDR"
+	xclip -selection clipboard -i "$out_enc_hdr"
 
 	cat <<- . | wr
 	The encrypted output message is now available as the clipboard's new
@@ -143,31 +143,31 @@ encrypt() {
 }
 
 reply() {
-	local CHARSET IN_ENC DEC_LOG KEYS OWN IN_DEC
-	IN_ENC=$TDIR/in.asc
+	local charset in_enc dec_log keys own in_dec inp
+	in_enc=$TDIR/in.asc
 	{
 		xclip -selection clipboard -o
 		echo
-	} > "$IN_ENC"
-	test -s "$IN_ENC"
+	} > "$in_enc"
+	test -s "$in_enc"
 
-	CHARSET=`grep -i '^Charset:' "$IN_ENC" | awk '{print $2}'` || :
-	if test -n "$CHARSET"
+	charset=`grep -i '^Charset:' "$in_enc" | awk '{print $2}'` || :
+	if test -n "$charset"
 	then
-		echo "Message encoding is $CHARSET." | wr
+		echo "Message encoding is $charset." | wr
 	else
-		CHARSET=ISO-8859-1
-		echo "Assuming message encoding as $CHARSET." | wr
+		charset=ISO-8859-1
+		echo "Assuming message encoding as $charset." | wr
 	fi
 
-	IN_DEC=$TDIR/in_foreign.txt
-	DEC_LOG=$TDIR/dec_log.txt
-	KEYS=$TDIR/dec_keys.txt
+	in_dec=$TDIR/in_foreign.txt
+	dec_log=$TDIR/dec_log.txt
+	keys=$TDIR/dec_keys.txt
 	echo "Decrypting message..." | wr
-	rmie "$IN_DEC"
-	do_gpg --keyid-format=long --output="$IN_DEC" "$IN_ENC" \
-		2> "$DEC_LOG"
-	if test ! -s "$IN_DEC"
+	rmie "$in_dec"
+	do_gpg --keyid-format=long --output="$in_dec" "$in_enc" \
+		2> "$dec_log"
+	if test ! -s "$in_dec"
 	then
 		cat <<- . | wr
 		Could not decrypt message, or encrypted message was empty.
@@ -177,24 +177,24 @@ reply() {
 		return
 	fi
 	sed 's/^gpg:.*, ID \([0-9A-F]\{16\}\),.*/\1/; t; d' \
-		"$DEC_LOG" | sort > "$KEYS"
-	test -s "$IN_DEC"; test -s "$KEYS"
+		"$dec_log" | sort > "$keys"
+	test -s "$in_dec"; test -s "$keys"
 
-	OWN=$TDIR/own_key_ids.txt
-	if test ! -e "$OWN" || test ! -s "$OWN"
+	own=$TDIR/own_key_ids.txt
+	if test ! -e "$own" || test ! -s "$own"
 	then
 		do_gpg --list-secret-keys --with-colons \
-			| grep '^\(sec\|ssb\):' | cut -d: -f5 | sort > "$OWN"
-		test -s "$OWN"
+			| grep '^\(sec\|ssb\):' | cut -d: -f5 | sort > "$own"
+		test -s "$own"
 	fi
 
 	RECV=$TDIR/receiver_ids.txt
-	join -v1 "$KEYS" "$OWN" > "$RECV"
+	join -v1 "$keys" "$own" > "$RECV"
 	
-	IN=$TDIR/in.txt
-	iconv -f "$CHARSET" "$IN_DEC" > "$IN"
+	inp=$TDIR/in.txt
+	iconv -f "$charset" "$in_dec" > "$inp"
 	
-	xclip -selection clipboard -i "$IN"
+	xclip -selection clipboard -i "$inp"
 	cat <<- . | wr
 
 	The decrypted message has been converted to the local character set
@@ -236,7 +236,7 @@ reply() {
 		for cs in LATIN1 LATIN9 WINDOWS-1252
 		do
 			if
-				iconv -t $cs "$IN" \
+				iconv -t $cs "$inp" \
 				| xclip -selection clipboard -i
 			then
 				cat <<- . | wr
@@ -256,7 +256,7 @@ reply() {
 			Failed: None of the conversions to fix the umlauts did
 			work. Leaving decrypted message as is.
 .
-		xclip -selection clipboard -i "$IN"
+		xclip -selection clipboard -i "$inp"
 	done
 	encrypt || return
 	cat <<- . | wr
@@ -269,24 +269,24 @@ reply() {
 }
 
 new() {
-	local r any DEC_LOG
+	local r any dec_log
 
-	DEC_LOG=$TDIR/dec_log.txt
+	dec_log=$TDIR/dec_log.txt
 	{
 		xclip -selection clipboard -o
 		echo
-	} > "$DEC_LOG"
-	test -s "$DEC_LOG"
+	} > "$dec_log"
+	test -s "$dec_log"
 
 	RECV=$TDIR/receiver_ids.txt
 	{
 		{
-			cat "$DEC_LOG"; echo
+			cat "$dec_log"; echo
 			x=A-Fa-f0-9; nx="[^$x]"; x="[$x]"
 			s='^'$nx'*\('$x'\{6,\}\)'$nx'*'
-			sed 's/'"$s"'/<\1>\\n/g; t; d' "$DEC_LOG"
+			sed 's/'"$s"'/<\1>\\n/g; t; d' "$dec_log"
 			s='^[^<]*<\([^<>]\+\)>[^<]*'
-			sed 's/'"$s"'/\1\\n/g; t; d' "$DEC_LOG"
+			sed 's/'"$s"'/\1\\n/g; t; d' "$dec_log"
 		} | awk -F '\\\\n' '{for (i= 1; i <= NF; ++i) print $i}' \
 		| {
 			s=`printf '[\t\b\v ]'`
