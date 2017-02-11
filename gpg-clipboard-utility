@@ -1,9 +1,9 @@
 #! /bin/sh
 show_version() {
 	wr -s <<- .
-	$APP version 15.255
+	$APP version 2017.42
 
-	(c) 2014-2015 by Guenther Brunthaler.
+	(c) 2014-2017 by Guenther Brunthaler.
 	This script is free software.
 	Distribution is permitted under the terms of the GPLv3.
 
@@ -101,8 +101,9 @@ do_gpg() {
 	"$gpg2" --batch --no-tty "$@"
 }
 
-# $CHARSET needs to be set (an empty string for autoprobe).
+# $RECV needs to have already been set.
 encrypt() {
+	local cs OUT OUT_DEC CHARSET OUT_ENC OUT_ENC_HDR
 	OUT=$TDIR/out_local.txt
 	xclip -selection clipboard -o > "$OUT"
 	cat <<- . | wr
@@ -110,25 +111,15 @@ encrypt() {
 	The output message has been fetched from the clipboard.
 .
 	OUT_DEC=$TDIR/out.txt
-	local cs
-	for cs in $CHARSET ISO-8859-1 ISO-8859-15 UTF-8 die
+	for cs in ISO-8859-1 ISO-8859-15 UTF-8 die
 	do
 		iconv -t "$cs" "$OUT" > "$OUT_DEC" && break
 		test x"$cs" != x"die"
 	done
-	if test x"$cs" = x"$CHARSET"
-	then
-		cat <<- . | wr
-
-	It has been converted to the same character set as the original
-	decrypted input message ($CHARSET).
-.
-	else
-		echo "It has been converted to character set $cs." | wr
-	fi
+	echo "It has been converted to character set $cs." | wr
 	OUT_ENC=$TDIR/out.asc
 	rmie "$OUT_ENC"
-	set -- do_gpg --encrypt --output "$OUT_ENC" --armor
+	set -- do_gpg --encrypt --set-filename "" --output "$OUT_ENC" --armor
 	while read recv
 	do
 		echo "Encrypting to receiver $recv." | wr
@@ -152,6 +143,7 @@ encrypt() {
 }
 
 reply() {
+	local CHARSET IN_ENC DEC_LOG KEYS OWN IN_DEC
 	IN_ENC=$TDIR/in.asc
 	{
 		xclip -selection clipboard -o
@@ -170,7 +162,6 @@ reply() {
 
 	IN_DEC=$TDIR/in_foreign.txt
 	DEC_LOG=$TDIR/dec_log.txt
-	RECS=$TDIR/dec_receivers.txt
 	KEYS=$TDIR/dec_keys.txt
 	echo "Decrypting message..." | wr
 	rmie "$IN_DEC"
@@ -278,7 +269,7 @@ reply() {
 }
 
 new() {
-	local r any
+	local r any DEC_LOG
 
 	DEC_LOG=$TDIR/dec_log.txt
 	{
@@ -466,24 +457,27 @@ tools() {
 	  Press "Back" to leave this menu and return to the main menu instead.
 .
 	request Install Uninstall Back || { true && return; }
-	if test $button = Install
-	then
-		echo "Installing icon '$icon'..."
-		gen_appicon > "$icon"
-		echo "Installing desktop information file '$desktop'..."
-		gen_desktop > "$desktop"
-	elif test $button = Uninstall
-	then
-		local f
-		for f in "$icon" "$desktop"
-		do
-			if test -f "$f"
-			then
-				echo "Removing file '$f'..."
-				rm -- "$f"
-			fi
-		done
-	fi
+	case $button in
+		Install)
+			echo "Installing icon '$icon'..."
+			gen_appicon > "$icon"
+			echo "Installing desktop information file" \
+				"'$desktop'..."
+			gen_desktop > "$desktop"
+			;;
+		Uninstall)
+			local f
+			for f in "$icon" "$desktop"
+			do
+				if test -f "$f"
+				then
+					echo "Removing file '$f'..."
+					rm -- "$f"
+				fi
+			done
+			;;
+		*) false || exit
+	esac
 	cat <<- . | wr
 
 		Now the desktop menus needs to be refreshed.
@@ -528,17 +522,17 @@ test -n "$TDIR"
 test -d "$TDIR"
 
 cleanup() {
+	rc=$?
 	echo "Failed!" >& 2
 	test -n "$errfile" && exec 2>& -
 	test -n "$progress" && exec >& -
 	exec 2> /dev/null
-	if test -z "$OK" && test -n "$errfile"
+	if test $rc != 0 && test -n "$errfile"
 	then
 		xmessageMBCS "$errfile" -buttons "Terminate" || :
 	fi
 	rm -r -- "$TDIR" || :
 }
-OK=
 errfile=
 progress=
 trap cleanup 0
@@ -659,15 +653,10 @@ do
 	Or press "Exit" to quit this application.
 .
 	request Reply New Tools Exit || break
-	if test $button = Reply
-	then
-		reply || break
-	elif test $button = New
-	then
-		new || break
-	elif test $button = Tools
-	then
-		tools || break
-	fi
+	case $button in
+		Reply) reply || break;;
+		New) new || break;;
+		Tools) tools || break;;
+		*) false || exit
+	esac
 done
-OK=y
