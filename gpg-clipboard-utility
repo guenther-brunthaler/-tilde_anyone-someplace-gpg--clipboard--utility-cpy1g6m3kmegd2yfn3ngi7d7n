@@ -168,7 +168,7 @@ signature() {
 			A signature has successfully been verified:
 			
 		.
-			cat "$stat" | wr
+			cat "$stat" | wr -s
 			xclip -selection clipboard -i "$out"
 			cat <<- . | wr
 
@@ -184,7 +184,7 @@ signature() {
 			Even though a signature was found, it was *bad*:
 			
 		.
-			cat "$stat" | wr
+			cat "$stat" | wr -s
 			cat <<- . | wr
 
 			This means the signature could *NOT* be verified!
