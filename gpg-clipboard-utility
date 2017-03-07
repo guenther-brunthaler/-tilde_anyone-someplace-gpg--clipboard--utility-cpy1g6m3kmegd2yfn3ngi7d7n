@@ -633,6 +633,7 @@ cleanup() {
 errfile=
 progress=
 trap cleanup 0
+trap 'exit $?' INT TERM QUIT HUP
 
 errfile=$TDIR/errfile
 exec 2> "$errfile"
