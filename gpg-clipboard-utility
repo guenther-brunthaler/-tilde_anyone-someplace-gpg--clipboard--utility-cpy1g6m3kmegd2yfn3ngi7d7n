@@ -748,8 +748,7 @@ do
 
 	* For verifying the signature of an already signed text in the
 	clipboard or for signing the unsigned text currently in the clipboard
-	with your default signing key, press "Signature". The signed text will
-	replace the unsigned original text in the clipboard.
+	with your default signing key, press "Signature".
 
 	* Press "Tools" for less frequently used options.
 	
