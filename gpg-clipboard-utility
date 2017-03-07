@@ -163,7 +163,7 @@ signature() {
 	case $rc in
 		0)
 			cat <<- . | wr
-			*** SUCCESS ***
+			*** VERIFY: SUCCESS ***
 			
 			A signature has successfully been verified:
 			
@@ -179,7 +179,7 @@ signature() {
 			;;
 		1)
 			cat <<- . | wr
-			*** FAILURE ***
+			*** VERIFY: FAILURE ***
 			
 			Even though a signature was found, it was *bad*:
 			
@@ -208,7 +208,7 @@ signature() {
 			a signature at all. Therefore assuming it is plain text
 			to be signed.
 			
-			*** SIGNING ***
+			*** CREATE: SIGNATURE ***
 			
 			Signing with the default key.
 		.
