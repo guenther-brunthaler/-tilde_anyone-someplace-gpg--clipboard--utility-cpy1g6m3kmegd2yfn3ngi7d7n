@@ -1,7 +1,7 @@
 #! /bin/sh
 show_version() {
 	wr -s <<- .
-	$APP version 2017.42
+	$APP version 2017.66
 
 	(c) 2014-2017 by Guenther Brunthaler.
 	This script is free software.
@@ -97,8 +97,12 @@ request() {
 	test x"$button" != x"$abort" || return
 }
 
+try_gpg() {
+	"$gpg2" --batch --no-tty "$@" || return
+}
+
 do_gpg() {
-	"$gpg2" --batch --no-tty "$@"
+	try_gpg "$@"
 }
 
 # $RECV needs to have already been set.
@@ -139,6 +143,99 @@ encrypt() {
 	cat <<- . | wr
 	The encrypted output message is now available as the clipboard's new
 	contents.
+.
+}
+
+signature() {
+	local inp out stat rc
+	inp=$TDIR/in.asc
+	xclip -selection clipboard -o > "$inp"
+	cat <<- . | wr
+
+	Fetching the message to be signed or verified from the clipboard.
+	
+	Attempting to verify a signature.
+	
+.
+	out=$TDIR/out.txt
+	stat=$TDIR/status.txt
+	rc=0; try_gpg --decrypt "$inp" > "$out" 2> "$stat" || rc=$?
+	case $rc in
+		0)
+			cat <<- . | wr
+			*** SUCCESS ***
+			
+			A signature has successfully been verified:
+			
+		.
+			cat "$stat" | wr
+			xclip -selection clipboard -i "$out"
+			cat <<- . | wr
+
+			Detaching the signature from the signed text. The
+			verified text (without the signature) is now available
+			as the clipboard's new contents.
+		.
+			;;
+		1)
+			cat <<- . | wr
+			*** FAILURE ***
+			
+			Even though a signature was found, it was *bad*:
+			
+		.
+			cat "$stat" | wr
+			cat <<- . | wr
+
+			This means the signature could *NOT* be verified!
+			
+			The signed message is either damaged or has
+			maliciously be tampered with by an attacker. It is
+			also possible that the key used to create the
+			signature was already expired. Or the sender might not
+			actually be who he claims to be, only trying to
+			impersonate the supposed sender.
+			
+			Regardless - do not trust the incorrectly signed text!
+			
+			Ignore it or tell the supposed sender to send the
+			message again, this time with a better signature.
+		.
+			;;
+		*)
+			cat <<- . | wr
+			The text in the clipboard does not seem to contain
+			a signature at all. Therefore assuming it is plain text
+			to be signed.
+			
+			*** SIGNING ***
+			
+			Signing with the default key.
+		.
+
+			rm -f -- "$out"
+			do_gpg --clearsign --output "$out" "$inp"
+			xclip -selection clipboard -i "$out"
+			cat <<- . | wr
+
+			The newly signed text (including the added signature)
+			is now available as the clipboard's new contents.
+		.
+			return
+	esac
+	cat <<- . | wr
+	
+	* Press "Copy Status" to copy the above signature verification
+	result message into the clipboard.
+	
+	* Press "Back" to go back to the main menu instead.
+.
+	request "Copy Status" Back || { true && return; }
+	xclip -selection clipboard -i "$stat"
+	cat <<- . | wr
+	
+	The verification status message is now available as the clipboard's
+	new contents.
 .
 }
 
@@ -642,21 +739,27 @@ while :
 do
 	cat <<- . | wr
 
-	In order to decrypt an existing PGP message for subsequent reply, copy
-	the encrypted message into the clipboard, then press "Reply".
+	* In order to decrypt an existing PGP message for subsequent reply,
+	copy the encrypted message into the clipboard, then press "Reply".
 	
-	For encrypting a new PGP message, copy the recipients'
+	* For encrypting a new PGP message, copy the recipients'
 	e-mail-addresses or PGP key IDs into the clipboard, then press "New".
 
-	Press "Tools" for less frequently used options.
+	* For verifying the signature of an already signed text in the
+	clipboard or for signing the unsigned text currently in the clipboard
+	with your default signing key, press "Signature". The signed text will
+	replace the unsigned original text in the clipboard.
+
+	* Press "Tools" for less frequently used options.
 	
-	Or press "Exit" to quit this application.
+	* Or press "Exit" to quit this application.
 .
-	request Reply New Tools Exit || break
+	request Reply New Signature Tools Exit || break
 	case $button in
 		Reply) reply || break;;
 		New) new || break;;
 		Tools) tools || break;;
+		Signature) signature || break;;
 		*) false || exit
 	esac
 done
