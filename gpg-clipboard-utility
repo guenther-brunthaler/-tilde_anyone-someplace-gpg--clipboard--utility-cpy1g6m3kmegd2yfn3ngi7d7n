@@ -1,7 +1,7 @@
 #! /bin/sh
 show_version() {
 	wr -s <<- .
-	$APP version 2017.66
+	$APP version 2017.69
 
 	(c) 2014-2017 by Guenther Brunthaler.
 	This script is free software.
@@ -105,6 +105,61 @@ do_gpg() {
 	try_gpg "$@"
 }
 
+# Sets $REVC to name of file with receiver/signer IDs.
+# $1 and $2 distinguish beween receivers and signers.
+parse_ids_from_clipboard() {
+	local r any dec_log receivers recipients
+	receivers=$1; recipients=$2 # Texts to replace those words.
+
+	dec_log=$TDIR/dec_log.txt
+	{
+		xclip -selection clipboard -o
+		echo
+	} > "$dec_log"
+	test -s "$dec_log"
+
+	RECV=$TDIR/receiver_ids.txt
+	{
+		{
+			cat "$dec_log"; echo
+			x=A-Fa-f0-9; nx="[^$x]"; x="[$x]"
+			s='^'$nx'*\('$x'\{6,\}\)'$nx'*'
+			sed 's/'"$s"'/<\1>\\n/g; t; d' "$dec_log"
+			s='^[^<]*<\([^<>]\+\)>[^<]*'
+			sed 's/'"$s"'/\1\\n/g; t; d' "$dec_log"
+		} | awk -F '\\\\n' '{for (i= 1; i <= NF; ++i) print $i}' \
+		| {
+			s=`printf '[\t\b\v ]'`
+			sed 's/^'"$s"'*//; s/'"$s"'*$//' | sed '/^$/d'
+		} | sort -u \
+		| while read recv
+		do
+			do_gpg --list-public-keys --with-colons \
+				--fixed-list-mode -- "$recv" || :
+		done \
+		| cut -d: -f1,2,5,12 | grep '^pub:[mfu].*:.*:[^:Dd]*$' \
+		| grep ':[^:]*E[^:]*$' | cut -d: -f3 | sort -u
+	} 2> /dev/null > "$RECV"
+	
+	{
+		echo "The following $receivers have been selected:"
+		echo
+		set -- do_gpg --list-public-keys
+		any=
+		while read r
+		do
+			set -- "$@" "$r"
+			any=y
+		done < "$RECV"
+		if test -z "$any"
+		then
+			{ echo "ERROR: No $recpients match!"; echo; } | wr
+			return
+		fi
+		"$@"
+	} | wr -s
+}
+
 # $RECV needs to have already been set.
 encrypt() {
 	local cs out out_dec charset out_enc out_enc_hdr
@@ -204,17 +259,47 @@ signature() {
 			;;
 		*)
 			cat <<- . | wr
-			The text in the clipboard does not seem to contain
-			a signature at all. Therefore assuming it is plain text
+			The text in the clipboard does not seem to contain a
+			signature at all. Therefore assuming it is plain text
 			to be signed.
-			
+
 			*** CREATE: SIGNATURE ***
 			
-			Signing with the default key.
+			* If you want to sign the message with your default
+			key, press "Default Key".
+			
+			* If you want to sign the message with a different
+			key, copy its ID, e-mail-address or other uniquely
+			identifying part of the key name into the clipboard
+			and press "ID/Name from Clipboard". Don't worry, the
+			messsage has been saved into a temporary file already!
+			
+			* If you dont' want to sign anything, press "Abort"
+			and the message will be copied back into the
+			clibpboard unmodified.
 		.
-
+			request "Default Key" "ID/Name from Clipboard" Abort \
+				|| {
+					xclip -selection clipboard -i "$inp"
+					return
+					
+				}
+			echo
+			set --
+			if test "Default Key" = "$button"
+			then
+				echo "Signing with default key..." | wr
+			else
+				parse_ids_from_clipboard "signing keys" signers
+				test 1 = "`wc -l < "$RECV"`" || die \
+					"Exactly one signer is required!"
+				set -- "`cat "$RECV"`"; test -n "$1"
+				echo "Signing using key with ID $1..." | wr
+				set -- -u "$1"
+			fi
+			set do_gpg --clearsign "$@" --output "$out" "$inp"
 			rm -f -- "$out"
-			do_gpg --clearsign --output "$out" "$inp"
+			"$@"
 			xclip -selection clipboard -i "$out"
 			cat <<- . | wr
 
@@ -366,55 +451,7 @@ reply() {
 }
 
 new() {
-	local r any dec_log
-
-	dec_log=$TDIR/dec_log.txt
-	{
-		xclip -selection clipboard -o
-		echo
-	} > "$dec_log"
-	test -s "$dec_log"
-
-	RECV=$TDIR/receiver_ids.txt
-	{
-		{
-			cat "$dec_log"; echo
-			x=A-Fa-f0-9; nx="[^$x]"; x="[$x]"
-			s='^'$nx'*\('$x'\{6,\}\)'$nx'*'
-			sed 's/'"$s"'/<\1>\\n/g; t; d' "$dec_log"
-			s='^[^<]*<\([^<>]\+\)>[^<]*'
-			sed 's/'"$s"'/\1\\n/g; t; d' "$dec_log"
-		} | awk -F '\\\\n' '{for (i= 1; i <= NF; ++i) print $i}' \
-		| {
-			s=`printf '[\t\b\v ]'`
-			sed 's/^'"$s"'*//; s/'"$s"'*$//' | sed '/^$/d'
-		} | sort -u \
-		| while read recv
-		do
-			do_gpg --list-public-keys --with-colons \
-				--fixed-list-mode -- "$recv" || :
-		done \
-		| cut -d: -f1,2,5,12 | grep '^pub:[mfu].*:.*:[^:Dd]*$' \
-		| grep ':[^:]*E[^:]*$' | cut -d: -f3 | sort -u
-	} 2> /dev/null > "$RECV"
-	
-	{
-		echo "The following receivers have been selected:"
-		echo
-		set -- do_gpg --list-public-keys
-		any=
-		while read r
-		do
-			set -- "$@" "$r"
-			any=y
-		done < "$RECV"
-		if test -z "$any"
-		then
-			{ echo "ERROR: No recpients match!"; echo; } | wr
-			return
-		fi
-		"$@"
-	} | wr -s
+	parse_ids_from_clipboard receivers recpients
 	cat <<- . | wr
 
 	Now copy the new message into the clipboard, encoded using the
@@ -635,7 +672,18 @@ progress=
 trap cleanup 0
 trap 'exit $?' INT TERM QUIT HUP
 
+debug=false
+while getopts D opt
+do
+	case $opt in
+		D) debug=true;;
+		*) false || exit
+	esac
+done
+shift `expr $OPTIND - 1 || :`
+
 errfile=$TDIR/errfile
+$debug && exec 5>& 2 # Save terminal STDERR for debugging.
 exec 2> "$errfile"
 progress=$TDIR/progress
 exec > "$progress"
@@ -747,8 +795,8 @@ do
 	e-mail-addresses or PGP key IDs into the clipboard, then press "New".
 
 	* For verifying the signature of an already signed text in the
-	clipboard or for signing the unsigned text currently in the clipboard
-	with your default signing key, press "Signature".
+	clipboard or for signing the unsigned text currently in the clipboard,
+	press "Signature".
 
 	* Press "Tools" for less frequently used options.
 	
