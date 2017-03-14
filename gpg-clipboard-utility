@@ -1,7 +1,7 @@
 #! /bin/sh
 show_version() {
 	wr -s <<- .
-	$APP version 2017.69
+	$APP version 2017.73
 
 	(c) 2014-2017 by Guenther Brunthaler.
 	This script is free software.
@@ -325,7 +325,9 @@ signature() {
 }
 
 reply() {
-	local charset in_enc dec_log keys own in_dec inp
+	local charset in_enc dec_log keys own in_dec inp separator
+	separator=20
+	separator=`printf '%*s' "$separator" "" | tr -c -- - -`
 	in_enc=$TDIR/in.asc
 	{
 		xclip -selection clipboard -o
@@ -349,6 +351,7 @@ reply() {
 	rmie "$in_dec"
 	do_gpg --keyid-format=long --output="$in_dec" "$in_enc" \
 		2> "$dec_log"
+	echo $separator; wr -s < "$dec_log"; echo $separator; echo
 	if test ! -s "$in_dec"
 	then
 		cat <<- . | wr
@@ -378,7 +381,6 @@ reply() {
 	
 	xclip -selection clipboard -i "$inp"
 	cat <<- . | wr
-
 	The decrypted message has been converted to the local character set
 	and is now available as the clipboard's new contents.
 .
