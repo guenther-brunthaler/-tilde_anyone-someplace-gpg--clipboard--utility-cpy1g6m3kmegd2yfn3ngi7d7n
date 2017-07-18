@@ -1,7 +1,7 @@
 #! /bin/sh
 show_version() {
 	wr -s <<- .
-	$APP version 2017.73
+	$APP version 2017.198
 
 	(c) 2014-2017 by Guenther Brunthaler.
 	This script is free software.
@@ -324,6 +324,114 @@ signature() {
 .
 }
 
+# $1: outfile
+kludge() {
+	local cs
+	for cs in LATIN1 LATIN9 WINDOWS-1252
+	do
+		if
+			xclip -selection clipboard -o \
+			| iconv -t $cs > "$1"
+		then
+			cat <<- . | wr
+				Successfully applied an additional conversion
+				to $cs character set on top of the decrypted
+				message with already-applied character set
+				conversion as specified in the PGP
+				"Charset"-header in an attempt to fix
+				incorrectly encoded umlauts in the original
+				message.
+				
+.
+			return
+		fi
+	done
+	cat <<- . | wr
+		Failed: None of the conversions to fix the umlauts did work.
+		Leaving decrypted message as is.
+		
+.
+	false || return
+}
+
+dequote_printable() {
+	xclip -selection clipboard -o \
+	| while IFS= read -r line
+	do
+		while pfx=${line%=}; test "$pfx" != "$line"
+		do
+			if IFS= read -r line
+			then
+				line=$pfx$line
+			else
+				line=$pfx
+				break
+			fi
+		done
+		inp=$line; line=
+		while :
+		do
+			sfx=${inp#*=[0-9A-F][0-9A-F]}
+			if test "$sfx" = "$inp"
+			then
+				line=$line$inp
+				break
+			fi
+			pfx=${inp%"$sfx"}; inp=$sfx
+			ppfx=${pfx%=??}; line=$line$ppfx
+			hex=${pfx#"$ppfx="}
+			hex=`printf "\\\\\`printf %03o 0x$hex\`:"`
+			line=$line${hex%:}
+		done
+		printf '%s\n' "$line"
+	done > "$1"
+	cat <<- . | wr
+		Successfully decoded MIME "quoted-printable" text.
+
+.
+}
+
+txt_conv_tools() {
+	local t
+	t=$TDIR/tools.tmp
+	while :
+	do
+		cat <<- . | wr
+		Apply the following conversion to the text currently in the
+		clipboard, and replace the clipboard text with the result.
+
+		*
+		  press "Kludge" to convert the text into the Latin-1
+		  character set. It this fails, try Latin-9 and then
+		  WINDOWS-1252 (a.k.a. "ANSI" under MS Windows). Use this if
+		  umlauts in the current clipboard contents have obviously
+		  been decrypted incorrectly, which seems to be a bug in some
+		  versions of EnigMail when creating UTF-8 encoded PGP
+		  messages.
+
+		*
+		  press "unhex MIME" to decode MIME "quoted printable" text.
+
+		*
+		  press "Done" to accept the conversions which have been
+		  applied to the current contents of the clipboard and resume
+		  with the operation which was in progress at the time
+		  immediately before this conversion menu was entered.
+
+		*
+		  press "Cancel" to abort the conversion operation and restore
+		  the original text in the clipboard.
+.
+		request Done Kludge "unhex MIME" Cancel || return
+		case $button in
+			Kludge) kludge "$t" || return;;
+			"unhex MIME") dequote_printable "$t" || return;;
+			*) return
+		esac
+		xclip -selection clipboard -i "$t"
+	done
+}
+
 reply() {
 	local charset in_enc dec_log keys own in_dec inp separator
 	separator=20
@@ -399,48 +507,24 @@ reply() {
 		*
 		  press "Encrypt" to encrypt the e-Mail to the original
 		  sender,
+
 		*
-		  press "Kludge" to further convert the already decrypted and
-		  character-set converted decoded message into the Latin-1
-		  character set. It this fails, try Latin-9 and then
-		  WINDOWS-1252 (a.k.a. "ANSI" under MS Windows) instead. Use
-		  this if umlauts in the current clipboard contents have
-		  obviously been decrypted incorrectly, which seems to be a
-		  bug in some versions of EnigMail when creating UTF-8 encoded
-		  PGP messages.
+		  press "Tools" to apply additional conversions on the text
+		  currently in the clipboard. This can help fix problems when
+		  the text pasted from the clipboard does not look right
+		  already.
+
 		*
 		  press "Quit" to terminate the application prematurely, or
+
 		*
 		  press "Cancel" to abort the reply operation in progress and
 		  return to the main menu instead.
 .
-		request Encrypt Cancel Kludge Quit || return
+		request Encrypt Cancel Tools Quit || return
 		test $button = Cancel && return
-		test $button != Kludge && break
-		for cs in LATIN1 LATIN9 WINDOWS-1252
-		do
-			if
-				iconv -t $cs "$inp" \
-				| xclip -selection clipboard -i
-			then
-				cat <<- . | wr
-					Successfully applied an additional
-					conversion to $cs character set on top
-					of the decrypted message with
-					already-applied character set
-					conversion as specified in the PGP
-					"Charset"-header in an attempt to fix
-					incorrectly encoded umlauts in the
-					original message.
-.
-				continue 2
-			fi
-		done
-		cat <<- . | wr
-			Failed: None of the conversions to fix the umlauts did
-			work. Leaving decrypted message as is.
-.
-		xclip -selection clipboard -i "$inp"
+		test $button != Tools && break
+		txt_conv_tools || xclip -selection clipboard -i "$inp"
 	done
 	encrypt || return
 	cat <<- . | wr
