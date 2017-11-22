@@ -385,6 +385,13 @@ dequote_printable() {
 		done
 		printf '%s\n' "$line"
 	done > "$1"
+	iconv -t UTF-8 -- "$1" > /dev/null 2>& 1 || {
+		local t
+		t=$1.tmp
+		cat "$1" > "$t"
+		iconv -f LATIN9 -- "$t" > "$1"
+		rm -- "$t"
+	}
 	cat <<- . | wr
 		Successfully decoded MIME "quoted-printable" text.
 
