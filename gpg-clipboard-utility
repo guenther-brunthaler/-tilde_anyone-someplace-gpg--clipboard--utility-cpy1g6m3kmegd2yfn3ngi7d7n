@@ -803,79 +803,81 @@ test -n "$gpg2" \
 && test $v -ge 2 \
 || die "GnuPG version 2 or later needs to be installed!"
 
-gpgax=gpg-agent2
-which2 "$gpgax" > /dev/null || gpgax=gpg-agent
-phase=try
-while
-	test -z "$GPG_AGENT_INFO" || {
-		t=${GPG_AGENT_INFO%:*}
-		test x"$t" = x"$GPG_AGENT_INFO"
-	} || {
-		t2=${t##*:}
-		test x"$t2" = x"$t"
-	} || {
-		t=/proc/$t2/exe
-		test ! -L "$t"
-	} || ! t=`readlink "$t"` || test -z "$t" || test ! -f "$t" \
-	|| test x"${t##*/}" != x"$gpgax"
-do
-	test -n "$HOME"
-	cache=$HOME/.cache
-	if test ! -d "$cache"
-	then
-		phase=new
-		mkdir -- "$cache"
-	fi
-	cache=$cache/gpg-agent.env
-	if test ! -f "$cache"
-	then
-		phase=new
-		test ! -e "$cache"
-		> "$cache"
-		chmod 600 -- "$cache"
-	fi
-	case $phase in
-		try)
-			echo "Trying to re-load saved $gpgax environment" \
-				"from '$cache'..." | wr
-			phase=new;;
-		new)
-			echo "Launching $gpgax..." | wr
-			need "$gpgax"
-			{
-				# gpg-agent will not write anything for GnuPG
-				# version 2.1 or later.
-				echo GPG_AGENT_INFO=not_needed
-				"$gpgax" -q --daemon
-			} > "$cache"
-			phase=fail
-			;;
-		*)
-			die "Could not start $gpgax!"
-	esac
-	unset GPG_AGENT_INFO; . "$cache"
-	if test x"$GPG_AGENT_INFO" = x'not_needed'
-	then
-		# Since GnuPG 2.1, $GPG_AGENT_INFO is no longer used and the
-		# existence of a socket indicates the agent is running.
-		if test -S "${GNUPGHOME:-"$HOME/.gnupg"}/S.gpg-agent"
+test "`echo NOP | gpg-connect-agent 2> /dev/null`" = OK || {
+	gpgax=gpg-agent2
+	which2 "$gpgax" > /dev/null || gpgax=gpg-agent
+	phase=try
+	while
+		test -z "$GPG_AGENT_INFO" || {
+			t=${GPG_AGENT_INFO%:*}
+			test x"$t" = x"$GPG_AGENT_INFO"
+		} || {
+			t2=${t##*:}
+			test x"$t2" = x"$t"
+		} || {
+			t=/proc/$t2/exe
+			test ! -L "$t"
+		} || ! t=`readlink "$t"` || test -z "$t" || test ! -f "$t" \
+		|| test x"${t##*/}" != x"$gpgax"
+	do
+		test -n "$HOME"
+		cache=$HOME/.cache
+		if test ! -d "$cache"
 		then
-			unset GPG_AGENT_INFO
-			phase=try
-			break
+			phase=new
+			mkdir -- "$cache"
 		fi
-	fi
-done
-if test $phase = try
-then
-	if test -n "$GPG_AGENT_INFO"
+		cache=$cache/gpg-agent.env
+		if test ! -f "$cache"
+		then
+			phase=new
+			test ! -e "$cache"
+			> "$cache"
+			chmod 600 -- "$cache"
+		fi
+		case $phase in
+			try)
+				echo "Trying to re-load saved $gpgax environment" \
+					"from '$cache'..." | wr
+				phase=new;;
+			new)
+				echo "Launching $gpgax..." | wr
+				need "$gpgax"
+				{
+					# gpg-agent will not write anything for GnuPG
+					# version 2.1 or later.
+					echo GPG_AGENT_INFO=not_needed
+					"$gpgax" -q --daemon
+				} > "$cache"
+				phase=fail
+				;;
+			*)
+				die "Could not start $gpgax!"
+		esac
+		unset GPG_AGENT_INFO; . "$cache"
+		if test x"$GPG_AGENT_INFO" = x'not_needed'
+		then
+			# Since GnuPG 2.1, $GPG_AGENT_INFO is no longer used and the
+			# existence of a socket indicates the agent is running.
+			if test -S "${GNUPGHOME:-"$HOME/.gnupg"}/S.gpg-agent"
+			then
+				unset GPG_AGENT_INFO
+				phase=try
+				break
+			fi
+		fi
+	done
+	if test $phase = try
 	then
-		echo "Using existing settings for $gpgax from" \
-			"\$GPG_AGENT_INFO."
-	else
-		echo "$gpgax is already running; using it."
-	fi | wr
-fi
+		if test -n "$GPG_AGENT_INFO"
+		then
+			echo "Using existing settings for $gpgax from" \
+				"\$GPG_AGENT_INFO."
+		else
+			echo "$gpgax is already running; using it."
+		fi | wr
+	fi
+}
 
 while :
 do
